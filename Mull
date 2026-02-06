@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+<title>Smart CPM Auto Ads</title>
+
+<style>
+body{
+  margin:0;height:100vh;
+  font-family:system-ui,sans-serif;
+  background:linear-gradient(135deg,#0f0c29,#302b63,#24243e);
+  color:#f0f0ff;
+  display:flex;align-items:center;justify-content:center;
+}
+.container{
+  width:90%;max-width:360px;
+  background:rgba(20,20,50,.92);
+  border:2px solid #f8b500;
+  border-radius:16px;
+  padding:2rem 1.5rem;
+  text-align:center;
+  box-shadow:0 12px 40px rgba(0,0,0,.7);
+}
+h1{color:#f8b500;margin-bottom:1rem}
+.stats{font-size:1.2rem;margin:1rem 0}
+.points{color:#f8b500;font-weight:700}
+
+button{
+  width:100%;
+  padding:14px;
+  border:none;
+  border-radius:50px;
+  font-size:1.1rem;
+  font-weight:700;
+  cursor:pointer;
+  margin-top:1rem;
+}
+.start{background:linear-gradient(90deg,#00ffcc,#00c3ff);color:#001}
+.stop{background:linear-gradient(90deg,#ff6b6b,#ff3b3b);color:#111}
+.reset{background:#444;color:#eee;font-size:.9rem}
+
+.status{min-height:70px;margin-top:1rem;font-size:1rem;color:#b0d0ff}
+.countdown{font-size:.95rem;color:#aaa;margin-top:.4rem}
+
+.loader{
+  margin:1.2rem auto;
+  width:46px;height:46px;
+  border-radius:50%;
+  border:5px solid rgba(255,255,255,.15);
+  border-top-color:#f8b500;
+  animation:spin 1s linear infinite;
+  display:none;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+
+<!-- Monetag SDK (YOUR ZONE) -->
+<script src="//libtl.com/sdk.js"
+  data-zone="10478519"
+  data-sdk="show_10478519"></script>
+
+<!-- Telegram WebApp SDK (optional but safe) -->
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+
+<body>
+<div class="container">
+  <h1>Smart CPM Auto Ads</h1>
+
+  <div class="stats">
+    পয়েন্ট: <span class="points" id="points">0</span> |
+    অ্যাড: <span id="count">0</span>
+  </div>
+
+  <button id="toggle" class="start">শুরু করুন</button>
+  <button id="reset" class="reset">ডেটা রিসেট</button>
+
+  <div class="status" id="status">প্রস্তুত</div>
+  <div class="countdown" id="countdown"></div>
+  <div class="loader" id="loader"></div>
+</div>
+
+<script>
+/* ───────── CONFIG ───────── */
+const CFG = {
+  FIRST_DELAY: 10000,        // 10s warm-up
+  RETRY_DELAY: 60000,
+  SESSION_CAP: 12,
+  STORAGE: 'smart_cpm_v1_'
+};
+
+/* Geo-based delay (safe heuristic) */
+const GEO_DELAY = {
+  TIER1: 80000,
+  EU: 110000,
+  LOW: 160000
+};
+
+/* ───────── STATE ───────── */
+const el = {
+  toggle: document.getElementById('toggle'),
+  reset: document.getElementById('reset'),
+  points: document.getElementById('points'),
+  count: document.getElementById('count'),
+  status: document.getElementById('status'),
+  cd: document.getElementById('countdown'),
+  loader: document.getElementById('loader')
+};
+
+let state = {
+  running: localStorage.getItem(CFG.STORAGE+'run') === '1',
+  points: +localStorage.getItem(CFG.STORAGE+'p') || 0,
+  count: +localStorage.getItem(CFG.STORAGE+'c') || 0,
+  sessionAds: 0,
+  busy: false,
+  timer: null,
+  cdTimer: null,
+  delay: GEO_DELAY.LOW
+};
+
+/* ───────── GEO DETECT (simple & allowed) ───────── */
+(function detectGeo(){
+  const l = (navigator.language || '').toLowerCase();
+  if(l.includes('en-us') || l.includes('en-gb')) state.delay = GEO_DELAY.TIER1;
+  else if(l.includes('de') || l.includes('fr')) state.delay = GEO_DELAY.EU;
+  else state.delay = GEO_DELAY.LOW;
+})();
+
+/* ───────── UTILS ───────── */
+function save(){
+  localStorage.setItem(CFG.STORAGE+'run', state.running?'1':'0');
+  localStorage.setItem(CFG.STORAGE+'p', state.points);
+  localStorage.setItem(CFG.STORAGE+'c', state.count);
+}
+function ui(){
+  el.points.textContent = state.points;
+  el.count.textContent = state.count;
+  el.toggle.textContent = state.running ? 'বন্ধ করুন' : 'শুরু করুন';
+  el.toggle.className = state.running ? 'stop' : 'start';
+  save();
+}
+
+function countdown(ms){
+  clearInterval(state.cdTimer);
+  let s = Math.ceil(ms/1000);
+  el.cd.textContent = `পরের অ্যাড ${s}s পরে`;
+  state.cdTimer = setInterval(()=>{
+    s--;
+    el.cd.textContent = `পরের অ্যাড ${s}s পরে`;
+    if(s<=0) clearInterval(state.cdTimer);
+  },1000);
+}
+
+function schedule(ms){
+  if(!state.running) return;
+  clearTimeout(state.timer);
+  countdown(ms);
+  state.timer = setTimeout(showAd, ms);
+}
+
+/* ───────── CORE ───────── */
+function showAd(){
+  if(!state.running || state.busy) return;
+
+  if(state.sessionAds >= CFG.SESSION_CAP){
+    el.status.textContent = 'এই সেশনের লিমিট শেষ ✔';
+    stop();
+    return;
+  }
+
+  if(typeof show_10478519 !== 'function'){
+    el.status.textContent = 'Ad SDK প্রস্তুত নয়';
+    schedule(CFG.RETRY_DELAY);
+    return;
+  }
+
+  state.busy = true;
+  el.loader.style.display = 'block';
+  el.status.textContent = 'অ্যাড লোড হচ্ছে…';
+
+  show_10478519()
+    .then(()=>{
+      state.points++;
+      state.count++;
+      state.sessionAds++;
+      ui();
+      el.status.textContent = '✔ সফল অ্যাড';
+      schedule(state.delay);
+    })
+    .catch(()=>{
+      el.status.textContent = 'ব্যর্থ, আবার চেষ্টা হবে';
+      schedule(CFG.RETRY_DELAY);
+    })
+    .finally(()=>{
+      state.busy = false;
+      el.loader.style.display = 'none';
+    });
+}
+
+/* ───────── CONTROLS ───────── */
+function start(){
+  state.running = true;
+  state.sessionAds = 0;
+  ui();
+  el.status.textContent = 'Warm-up চলছে…';
+  setTimeout(showAd, CFG.FIRST_DELAY);
+}
+
+function stop(){
+  state.running = false;
+  clearTimeout(state.timer);
+  clearInterval(state.cdTimer);
+  el.cd.textContent = '';
+  ui();
+}
+
+el.toggle.onclick = ()=> state.running ? stop() : start();
+el.reset.onclick = ()=>{
+  stop();
+  state.points = 0;
+  state.count = 0;
+  ui();
+  el.status.textContent = 'রিসেট সম্পন্ন';
+};
+
+/* Background safety */
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden && state.running) stop();
+});
+
+/* Telegram safe init */
+try{
+  Telegram.WebApp.ready();
+  Telegram.WebApp.expand();
+}catch(e){}
+
+ui();
+if(state.running) start();
+</script>
+</body>
+</html>
